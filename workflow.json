@@ -1,0 +1,427 @@
+{
+  "name": "8 Rainhas - FINAL v6",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────\n// TRIGGER — Define e expõe os parâmetros globais\n// da execução. Os nós de código leem daqui,\n// eliminando hardcode nos algoritmos.\n// ─────────────────────────────────────────────\nreturn [\n  {\n    json: {\n      ALPHA:      0.3,\n      MAX_ITER:   1000,\n      POP_SIZE:   20,\n      CROSS_RATE: 0.8,\n      MUT_RATE:   0.03\n    }\n  }\n];"
+      },
+      "id": "cd38661c-a4ab-437f-9291-9e6369745292",
+      "name": "Definir Parametros",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst params = $input.first().json;\nconst ALPHA    = params.ALPHA;\nconst MAX_ITER = params.MAX_ITER;\nconst N = 8;\nfunction calcConflitos(state) {\n  let c = 0;\n  for (let i = 0; i < N - 1; i++)\n    for (let j = i + 1; j < N; j++) {\n      if (state[i] === state[j]) c++;\n      if (Math.abs(state[i] - state[j]) === Math.abs(i - j)) c++;\n    }\n  return c;\n}\nfunction construirSolucao(alpha) {\n  const s = new Array(N).fill(0);\n  for (let col = 0; col < N; col++) {\n    const candidatos = [];\n    for (let linha = 0; linha < N; linha++) {\n      const t = [...s]; t[col] = linha;\n      candidatos.push({ linha, custo: calcConflitos(t) });\n    }\n    const cMin = Math.min(...candidatos.map(c => c.custo));\n    const cMax = Math.max(...candidatos.map(c => c.custo));\n    const limiar = cMin + alpha * (cMax - cMin);\n    const rcl = candidatos.filter(c => c.custo <= limiar);\n    s[col] = rcl[Math.floor(Math.random() * rcl.length)].linha;\n  }\n  return s;\n}\nfunction buscaLocal(estado) {\n  let atual = [...estado];\n  let hAtual = calcConflitos(atual);\n  let melhorou = true;\n  while (melhorou && hAtual > 0) {\n    melhorou = false;\n    let melhorH = hAtual, melhorMov = null;\n    for (let col = 0; col < N; col++)\n      for (let linha = 0; linha < N; linha++) {\n        if (linha === atual[col]) continue;\n        const viz = [...atual]; viz[col] = linha;\n        const hv = calcConflitos(viz);\n        if (hv < melhorH) { melhorH = hv; melhorMov = { col, linha }; }\n      }\n    if (melhorMov) { atual[melhorMov.col] = melhorMov.linha; hAtual = melhorH; melhorou = true; }\n  }\n  return { estado: atual, h: hAtual };\n}\nconst resultados = [];\nfor (let rodada = 1; rodada <= 50; rodada++) {\n  const t0 = Date.now();\n  let melhorSolucao = null, melhorH = Infinity;\n    let iters = 0;\n  for (let it = 0; it < MAX_ITER; it++) {\n    iters = it + 1;\n    const { estado, h } = buscaLocal(construirSolucao(ALPHA));\n    if (h < melhorH) { melhorH = h; melhorSolucao = [...estado]; }\n    if (melhorH === 0) break;\n  }\n  resultados.push({ json: {\n    Rodada: rodada,\n    Algoritmo: 'GRASP',\n    Tempo_ms: Date.now() - t0,\n    Iteracoes_Geracoes: iters,\n    Melhor_Solucao: JSON.stringify(melhorSolucao),\n    Fitness_Final_h: melhorH,\n    Sucesso: melhorH === 0 ? 'SIM' : 'NAO'\n  }});\n}\nreturn resultados; "
+      },
+      "id": "a917468c-a510-40f3-a76d-9c97eaba5123",
+      "name": "GRASP 50x",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst params    = $input.first().json;\nconst POP_SIZE  = params.POP_SIZE;\nconst TX_CRUZ   = params.CROSS_RATE;\nconst TX_MUT    = params.MUT_RATE;\nconst MAX_GER   = params.MAX_ITER;\nconst N         = 8;\nconst BPR       = 3;\nconst TOTAL_BITS = N * BPR;\nconst N_ELITE   = 2;\n\nfunction decodificar(cromo) {\n  const s = [];\n  for (let i = 0; i < N; i++) {\n    const b = cromo.slice(i * BPR, i * BPR + BPR);\n    s.push(b[0] * 4 + b[1] * 2 + b[2]);\n  }\n  return s;\n}\n\nfunction calcConflitos(state) {\n  let c = 0;\n  for (let i = 0; i < N - 1; i++)\n    for (let j = i + 1; j < N; j++) {\n      if (state[i] === state[j]) c++;\n      if (Math.abs(state[i] - state[j]) === Math.abs(i - j)) c++;\n    }\n  return c;\n}\n\nfunction calcFitness(cromo) {\n  const h = calcConflitos(decodificar(cromo));\n  return { f: 1 / (1 + h), h };\n}\n\nfunction gerarCromo() {\n  return Array.from({ length: TOTAL_BITS }, () => (Math.random() < 0.5 ? 1 : 0));\n}\n\nfunction roleta(pop, fits) {\n  const total = fits.reduce((a, b) => a + b, 0);\n  let r = Math.random() * total;\n  for (let i = 0; i < pop.length; i++) { r -= fits[i]; if (r <= 0) return [...pop[i]]; }\n  return [...pop[pop.length - 1]];\n}\n\nfunction cruzar(p1, p2) {\n  if (Math.random() > TX_CRUZ) return [[...p1], [...p2]];\n  const k = 1 + Math.floor(Math.random() * (TOTAL_BITS - 1));\n  return [[...p1.slice(0, k), ...p2.slice(k)], [...p2.slice(0, k), ...p1.slice(k)]];\n}\n\nfunction mutar(cromo) {\n  return cromo.map(b => (Math.random() < TX_MUT ? 1 - b : b));\n}\n\nconst resultados = [];\nfor (let rodada = 1; rodada <= 50; rodada++) {\n  let pop = Array.from({ length: POP_SIZE }, gerarCromo);\n  const t0 = Date.now();\n  let melhorCromo = null, melhorH = Infinity, geracoes = 0;\n\n  for (let g = 0; g < MAX_GER; g++) {\n    geracoes = g + 1;\n    const avs = pop.map(c => calcFitness(c));\n    const fits = avs.map(a => a.f);\n\n    for (let i = 0; i < POP_SIZE; i++)\n      if (avs[i].h < melhorH) { melhorH = avs[i].h; melhorCromo = [...pop[i]]; }\n    if (melhorH === 0) break;\n\n    const idxOrdenados = fits\n      .map((f, i) => ({ f, i }))\n      .sort((a, b) => b.f - a.f);\n    const elites = idxOrdenados.slice(0, N_ELITE).map(e => [...pop[e.i]]);\n\n    const nova = [];\n    while (nova.length < POP_SIZE) {\n      const [f1, f2] = cruzar(roleta(pop, fits), roleta(pop, fits));\n      nova.push(mutar(f1));\n      if (nova.length < POP_SIZE) nova.push(mutar(f2));\n    }\n\n    const fitNova = nova.map(c => calcFitness(c).f);\n    const idxNovaPiores = fitNova\n      .map((f, i) => ({ f, i }))\n      .sort((a, b) => a.f - b.f)\n      .slice(0, N_ELITE)\n      .map(e => e.i);\n    for (let k = 0; k < N_ELITE; k++) nova[idxNovaPiores[k]] = elites[k];\n\n    pop = nova;\n  }\n\n  const estadoFinal = melhorCromo ? decodificar(melhorCromo) : new Array(N).fill(0);\n  resultados.push({ json: {\n    Rodada: rodada,\n    Algoritmo: 'Algoritmo Genetico',\n    Tempo_ms: Date.now() - t0,\n    Iteracoes_Geracoes: geracoes,\n    Melhor_Solucao: JSON.stringify(estadoFinal),\n    Conflitos_Finais_CQ: melhorH,\n    Sucesso: melhorH === 0 ? 'SIM' : 'NAO'\n  }});\n}\nreturn resultados;"
+      },
+      "id": "598fa147-3bf3-4094-8488-9ad7086bec72",
+      "name": "AG 50x",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        144
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "1e45c44f-8438-47f0-ade8-d434c5e00a9c",
+      "name": "Merge GRASP e AG",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        16,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1f6OYwi_gcapjVjNb7oqwiJW-yU7qTur_ZhvTh9dMBOs",
+          "mode": "list",
+          "cachedResultName": "GASP-IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1f6OYwi_gcapjVjNb7oqwiJW-yU7qTur_ZhvTh9dMBOs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Execucoes",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Rodada",
+              "displayName": "Rodada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Algoritmo",
+              "displayName": "Algoritmo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tempo_ms",
+              "displayName": "Tempo_ms",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Iteracoes_Geracoes",
+              "displayName": "Iteracoes_Geracoes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Melhor_Solucao",
+              "displayName": "Melhor_Solucao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Fitness_Final_h",
+              "displayName": "Fitness_Final_h",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Sucesso",
+              "displayName": "Sucesso",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        256,
+        0
+      ],
+      "id": "afb7da77-bd1b-4701-8f57-c2daa3169358",
+      "name": "Salvar Execucoes no Sheets",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "xar3T8QDkZGLxZPr",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "todos",
+        "options": {}
+      },
+      "id": "5775b754-28a8-42cf-b804-22b894fa23c4",
+      "name": "Agregar Todos os Resultados",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        496,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const todos = $input.first().json.todos;\nconst grasp = todos.filter(r => r.Algoritmo === 'GRASP');\nconst ag    = todos.filter(r => r.Algoritmo === 'Algoritmo Genetico');\n\nfunction stats(arr, campo) {\n  const vals = arr.map(r => Number(r[campo]));\n  const n = vals.length;\n  if (n === 0) return { media: 0, desvio: 0 };\n  const media = vals.reduce((a, b) => a + b, 0) / n;\n  const desvio = Math.sqrt(vals.reduce((a, b) => a + Math.pow(b - media, 2), 0) / n);\n  return { media: +media.toFixed(2), desvio: +desvio.toFixed(2) };\n}\n\nfunction taxaSucesso(arr) {\n  if (arr.length === 0) return 0;\n  return +((arr.filter(r => r.Sucesso === 'SIM').length / arr.length) * 100).toFixed(1);\n}\n\nfunction top5Solucoes(arr) {\n  return arr\n    .slice()\n    .sort((a, b) => Number(a.Conflitos_Finais_CQ) - Number(b.Conflitos_Finais_CQ))\n    .map(r => r.Melhor_Solucao)\n    .filter((v, i, a) => a.indexOf(v) === i)\n    .slice(0, 5)\n    .join(' | ');\n}\n\nreturn [\n  { json: {\n    Algoritmo:          'GRASP',\n    Execucoes:          grasp.length,\n    Media_Tempo_ms:     stats(grasp, 'Tempo_ms').media,\n    Desvio_Tempo_ms:    stats(grasp, 'Tempo_ms').desvio,\n    Media_Iteracoes:    stats(grasp, 'Iteracoes_Geracoes').media,\n    Desvio_Iteracoes:   stats(grasp, 'Iteracoes_Geracoes').desvio,\n    Taxa_Sucesso_pct:   taxaSucesso(grasp),\n    Media_Conflitos_CQ: stats(grasp, 'Conflitos_Finais_CQ').media,\n    Top5_Solucoes:      top5Solucoes(grasp)\n  }},\n  { json: {\n    Algoritmo:          'Algoritmo Genetico',\n    Execucoes:          ag.length,\n    Media_Tempo_ms:     stats(ag, 'Tempo_ms').media,\n    Desvio_Tempo_ms:    stats(ag, 'Tempo_ms').desvio,\n    Media_Iteracoes:    stats(ag, 'Iteracoes_Geracoes').media,\n    Desvio_Iteracoes:   stats(ag, 'Iteracoes_Geracoes').desvio,\n    Taxa_Sucesso_pct:   taxaSucesso(ag),\n    Media_Conflitos_CQ: stats(ag, 'Conflitos_Finais_CQ').media,\n    Top5_Solucoes:      top5Solucoes(ag)\n  }}\n];"
+      },
+      "id": "1590f794-a057-4f95-9ff9-abb3f8bdd1fd",
+      "name": "Calcular Estatisticas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1f6OYwi_gcapjVjNb7oqwiJW-yU7qTur_ZhvTh9dMBOs",
+          "mode": "list",
+          "cachedResultName": "GASP-IA",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1f6OYwi_gcapjVjNb7oqwiJW-yU7qTur_ZhvTh9dMBOs/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Resumo",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Algoritmo",
+              "displayName": "Algoritmo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Execucoes",
+              "displayName": "Execucoes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Media_Tempo_ms",
+              "displayName": "Media_Tempo_ms",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Desvio_Tempo_ms",
+              "displayName": "Desvio_Tempo_ms",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Media_Iteracoes",
+              "displayName": "Media_Iteracoes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Desvio_Iteracoes",
+              "displayName": "Desvio_Iteracoes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Taxa_Sucesso_pct",
+              "displayName": "Taxa_Sucesso_pct",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Media_Fitness_h",
+              "displayName": "Media_Fitness_h",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Top5_Solucoes",
+              "displayName": "Top5_Solucoes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        944,
+        0
+      ],
+      "id": "95360aa5-0590-4ffa-98c8-b98a5661a285",
+      "name": "Salvar Resumo no Sheets",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "xar3T8QDkZGLxZPr",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -752,
+        0
+      ],
+      "id": "7262fa98-b30b-47c4-b3cd-c6d1bc663f38",
+      "name": "When clicking ‘Execute workflow’"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Definir Parametros": {
+      "main": [
+        [
+          {
+            "node": "GRASP 50x",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "AG 50x",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GRASP 50x": {
+      "main": [
+        [
+          {
+            "node": "Merge GRASP e AG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AG 50x": {
+      "main": [
+        [
+          {
+            "node": "Merge GRASP e AG",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge GRASP e AG": {
+      "main": [
+        [
+          {
+            "node": "Salvar Execucoes no Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salvar Execucoes no Sheets": {
+      "main": [
+        [
+          {
+            "node": "Agregar Todos os Resultados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agregar Todos os Resultados": {
+      "main": [
+        [
+          {
+            "node": "Calcular Estatisticas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular Estatisticas": {
+      "main": [
+        [
+          {
+            "node": "Salvar Resumo no Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Definir Parametros",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "373264a9-a13d-4bd1-84cf-d1ca155eef48",
+  "meta": {
+    "instanceId": "a8f083656c5cd3dffe9a26daaf548560c0d24782bc07aba76c644f8c7896bfb9"
+  },
+  "id": "8vw2JO0VNiRDyf0x",
+  "tags": []
+}
