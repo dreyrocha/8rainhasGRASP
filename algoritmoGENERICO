@@ -1,0 +1,106 @@
+
+const params    = $input.first().json;
+const POP_SIZE  = params.POP_SIZE;
+const TX_CRUZ   = params.CROSS_RATE;
+const TX_MUT    = params.MUT_RATE;
+const MAX_GER   = params.MAX_ITER;
+const N         = 8;
+const BPR       = 3;
+const TOTAL_BITS = N * BPR;
+const N_ELITE   = 2;
+
+function decodificar(cromo) {
+  const s = [];
+  for (let i = 0; i < N; i++) {
+    const b = cromo.slice(i * BPR, i * BPR + BPR);
+    s.push(b[0] * 4 + b[1] * 2 + b[2]);
+  }
+  return s;
+}
+
+function calcConflitos(state) {
+  let c = 0;
+  for (let i = 0; i < N - 1; i++)
+    for (let j = i + 1; j < N; j++) {
+      if (state[i] === state[j]) c++;
+      if (Math.abs(state[i] - state[j]) === Math.abs(i - j)) c++;
+    }
+  return c;
+}
+
+function calcFitness(cromo) {
+  const h = calcConflitos(decodificar(cromo));
+  return { f: 1 / (1 + h), h };
+}
+
+function gerarCromo() {
+  return Array.from({ length: TOTAL_BITS }, () => (Math.random() < 0.5 ? 1 : 0));
+}
+
+function roleta(pop, fits) {
+  const total = fits.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < pop.length; i++) { r -= fits[i]; if (r <= 0) return [...pop[i]]; }
+  return [...pop[pop.length - 1]];
+}
+
+function cruzar(p1, p2) {
+  if (Math.random() > TX_CRUZ) return [[...p1], [...p2]];
+  const k = 1 + Math.floor(Math.random() * (TOTAL_BITS - 1));
+  return [[...p1.slice(0, k), ...p2.slice(k)], [...p2.slice(0, k), ...p1.slice(k)]];
+}
+
+function mutar(cromo) {
+  return cromo.map(b => (Math.random() < TX_MUT ? 1 - b : b));
+}
+
+const resultados = [];
+for (let rodada = 1; rodada <= 50; rodada++) {
+  let pop = Array.from({ length: POP_SIZE }, gerarCromo);
+  const t0 = Date.now();
+  let melhorCromo = null, melhorH = Infinity, geracoes = 0;
+
+  for (let g = 0; g < MAX_GER; g++) {
+    geracoes = g + 1;
+    const avs = pop.map(c => calcFitness(c));
+    const fits = avs.map(a => a.f);
+
+    for (let i = 0; i < POP_SIZE; i++)
+      if (avs[i].h < melhorH) { melhorH = avs[i].h; melhorCromo = [...pop[i]]; }
+    if (melhorH === 0) break;
+
+    const idxOrdenados = fits
+      .map((f, i) => ({ f, i }))
+      .sort((a, b) => b.f - a.f);
+    const elites = idxOrdenados.slice(0, N_ELITE).map(e => [...pop[e.i]]);
+
+    const nova = [];
+    while (nova.length < POP_SIZE) {
+      const [f1, f2] = cruzar(roleta(pop, fits), roleta(pop, fits));
+      nova.push(mutar(f1));
+      if (nova.length < POP_SIZE) nova.push(mutar(f2));
+    }
+
+    const fitNova = nova.map(c => calcFitness(c).f);
+    const idxNovaPiores = fitNova
+      .map((f, i) => ({ f, i }))
+      .sort((a, b) => a.f - b.f)
+      .slice(0, N_ELITE)
+      .map(e => e.i);
+    for (let k = 0; k < N_ELITE; k++) nova[idxNovaPiores[k]] = elites[k];
+
+    pop = nova;
+  }
+
+  const estadoFinal = melhorCromo ? decodificar(melhorCromo) : new Array(N).fill(0);
+  resultados.push({ json: {
+    Rodada: rodada,
+    Algoritmo: 'Algoritmo Genetico',
+    Tempo_ms: Date.now() - t0,
+    Iteracoes_Geracoes: geracoes,
+    Melhor_Solucao: JSON.stringify(estadoFinal),
+    Conflitos_Finais_CQ: melhorH,
+    Sucesso: melhorH === 0 ? 'SIM' : 'NAO'
+  }});
+}
+return resultados;
